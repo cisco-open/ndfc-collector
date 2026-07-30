@@ -37,6 +37,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 #   - depends_on: placeholder map or None
 #   - query: optional query string map with placeholder support
 #   - db_key: optional storage key used to derive the output filename
+#   - list_path: dot-notation path to the item array in the response, used to
+#     unwrap wrapped responses (e.g. {"fabrics": [...]}) before extracting
+#     placeholder values for dependent requests. "" means the response is
+#     already a single object; "@this" means the response is already a list.
 # Generated from collector/pkg/requests/requests.yaml - do not edit the list below manually.
 REQUESTS = [
     {
@@ -44,18 +48,21 @@ REQUESTS = [
         "depends_on": None,
         "query": None,
         "db_key": "inventory/switches",
+        "list_path": "switches",
     },
     {
         "url": "/api/v1/infra/systemResources/nodes/hardware",
         "depends_on": None,
         "query": None,
         "db_key": "systemResources/nodes/hardware",
+        "list_path": "nodes",
     },
     {
         "url": "/api/v1/manage/fabrics",
         "depends_on": None,
         "query": None,
         "db_key": "manage/fabrics",
+        "list_path": "fabrics",
     },
     {
         "url": "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/top-down/fabrics/{fabricName}/vrfs",
@@ -64,12 +71,14 @@ REQUESTS = [
         },
         "query": None,
         "db_key": "fabrics/{fabricName}/vrfs",
+        "list_path": "@this",
     },
     {
         "url": "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics",
         "depends_on": None,
         "query": None,
         "db_key": "lan-fabric/control/fabrics",
+        "list_path": "@this",
     },
     {
         "url": "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/top-down/fabrics/{fabricName}/networks",
@@ -78,48 +87,56 @@ REQUESTS = [
         },
         "query": None,
         "db_key": "fabrics/{fabricName}/networks",
+        "list_path": "@this",
     },
     {
         "url": "/api/v1/infra/backups",
         "depends_on": None,
         "query": None,
         "db_key": "infra/backups",
+        "list_path": "backups",
     },
     {
         "url": "/api/v1/analyze/anomalies/summary",
         "depends_on": None,
         "query": None,
         "db_key": "analyze/anomalies/summary",
+        "list_path": "",
     },
     {
         "url": "/api/v1/analyze/anomalies/groupedDetails",
         "depends_on": None,
         "query": None,
         "db_key": "analyze/anomalies/groupedDetails",
+        "list_path": "anomalies",
     },
     {
         "url": "/api/v1/analyze/systemAnomalies/summary",
         "depends_on": None,
         "query": None,
         "db_key": "analyze/systemAnomalies/summary",
+        "list_path": "",
     },
     {
         "url": "/api/v1/infra/cluster/config",
         "depends_on": None,
         "query": None,
         "db_key": "infra/cluster/config",
+        "list_path": "",
     },
     {
         "url": "/api/v1/infra/intersight/connection",
         "depends_on": None,
         "query": None,
         "db_key": "infra/intersight/connection",
+        "list_path": "",
     },
     {
         "url": "/api/v1/infra/license/assignments",
         "depends_on": None,
         "query": None,
         "db_key": "infra/license/assignments",
+        "list_path": "assignments",
     },
     {
         "url": "/api/v1/manage/fabrics/{fabricName}/vpcPairs",
@@ -128,12 +145,14 @@ REQUESTS = [
         },
         "query": None,
         "db_key": "fabrics/{fabricName}/vpcPairs",
+        "list_path": "vpcPairs",
     },
     {
         "url": "/appcenter/cisco/ndfc/api/v1/lan-fabric/rest/control/fabrics/msd/fabric-associations",
         "depends_on": None,
         "query": None,
         "db_key": "lan-fabric/control/fabrics/msd/fabric-associations",
+        "list_path": "@this",
     },
 ]
 
@@ -196,6 +215,14 @@ def substitute_query(query_template, context):
     return {key: substitute_url(value, context) for key, value in query_template.items()}
 
 
+def extract_list_result(result, list_path):
+    if not list_path or list_path == '@this':
+        return result
+    if isinstance(result, dict) and isinstance(result.get(list_path), list):
+        return result[list_path]
+    return result
+
+
 def extract_ctx(item, parent_ctx, key_mappings):
     ctx = dict(parent_ctx or {})
     if isinstance(item, dict):
@@ -252,6 +279,7 @@ def collect_data(client):
             depends_on = request_def.get('depends_on')
             query_template = request_def.get('query')
             db_key_template = request_def.get('db_key')
+            list_path = request_def.get('list_path')
 
             if depends_on is None:
                 filename = db_key_to_filename(db_key_template) or url_to_filename(url_template)
@@ -259,7 +287,7 @@ def collect_data(client):
                 result = client.get(url_template, params=substitute_query(query_template, {}))
                 if result is not None:
                     data[filename] = result
-                    results[url_template] = [({}, result)]
+                    results[url_template] = [({}, extract_list_result(result, list_path))]
                     print(f"  ✓ {filename} complete")
                 else:
                     print(f"  ✗ {filename} failed")
@@ -292,7 +320,7 @@ def collect_data(client):
                     result = client.get(resolved_url, params=resolved_query)
                     if result is not None:
                         data[filename] = result
-                        level_results.append((merged_ctx, result))
+                        level_results.append((merged_ctx, extract_list_result(result, list_path)))
                         print(f"  ✓ {filename} complete")
                     else:
                         print(f"  ✗ {filename} failed")

@@ -67,6 +67,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 #   - depends_on: placeholder map or None
 #   - query: optional query string map with placeholder support
 #   - db_key: optional storage key used to derive the output filename
+#   - list_path: dot-notation path to the item array in the response, used to
+#     unwrap wrapped responses (e.g. {"fabrics": [...]}) before extracting
+#     placeholder values for dependent requests. "" means the response is
+#     already a single object; "@this" means the response is already a list.
 # Generated from collector/pkg/requests/requests.yaml - do not edit the list below manually.
 `
 
@@ -131,6 +135,14 @@ def substitute_query(query_template, context):
     return {key: substitute_url(value, context) for key, value in query_template.items()}
 
 
+def extract_list_result(result, list_path):
+    if not list_path or list_path == '@this':
+        return result
+    if isinstance(result, dict) and isinstance(result.get(list_path), list):
+        return result[list_path]
+    return result
+
+
 def extract_ctx(item, parent_ctx, key_mappings):
     ctx = dict(parent_ctx or {})
     if isinstance(item, dict):
@@ -187,6 +199,7 @@ def collect_data(client):
             depends_on = request_def.get('depends_on')
             query_template = request_def.get('query')
             db_key_template = request_def.get('db_key')
+            list_path = request_def.get('list_path')
 
             if depends_on is None:
                 filename = db_key_to_filename(db_key_template) or url_to_filename(url_template)
@@ -194,7 +207,7 @@ def collect_data(client):
                 result = client.get(url_template, params=substitute_query(query_template, {}))
                 if result is not None:
                     data[filename] = result
-                    results[url_template] = [({}, result)]
+                    results[url_template] = [({}, extract_list_result(result, list_path))]
                     print(f"  ✓ {filename} complete")
                 else:
                     print(f"  ✗ {filename} failed")
@@ -227,7 +240,7 @@ def collect_data(client):
                     result = client.get(resolved_url, params=resolved_query)
                     if result is not None:
                         data[filename] = result
-                        level_results.append((merged_ctx, result))
+                        level_results.append((merged_ctx, extract_list_result(result, list_path)))
                         print(f"  ✓ {filename} complete")
                     else:
                         print(f"  ✗ {filename} failed")
@@ -341,6 +354,7 @@ func main() {
 			fmt.Fprintln(f, "        },")
 		}
 		fmt.Fprintf(f, "        \"db_key\": %q,\n", r.DBKey)
+		fmt.Fprintf(f, "        \"list_path\": %q,\n", r.ListPath)
 		fmt.Fprintln(f, "    },")
 	}
 	fmt.Fprint(f, "]")
