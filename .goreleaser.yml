@@ -22,7 +22,7 @@ builds:
 
 release:
   github:
-    owner: brightpuddle
+    owner: cisco-open
     name: ndfc-collector
 
 archives:
